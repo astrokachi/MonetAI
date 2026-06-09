@@ -1,0 +1,3 @@
+export const MODELS = {
+  llama: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q6_K.gguf',
+}
