@@ -1,21 +1,46 @@
+'use client';
 
-export async function downloadModel(modelUrl: string, modelName: string, onProgress: (progress: number, loaded: number, info: string, total: number) => void) {
+export interface DownloadProgress {
+  progress: number;
+  loaded: number;
+  total: number;
+  info: string;
+  isComplete: boolean;
+}
+
+export type OnProgressCallback = (progressData: DownloadProgress) => void;
+
+export async function downloadModel(
+  modelUrl: string,
+  onProgress?: OnProgressCallback
+): Promise<void> {
   const cache = await caches.open('ai-models');
-  const cachedResponse = await cache.match(modelName);
+  const cachedResponse = await cache.match(modelUrl);
 
   if (cachedResponse) {
     console.log("Model already cached!");
+    onProgress?.({
+      progress: 100,
+      loaded: 0,
+      total: 0,
+      info: 'Already cached',
+      isComplete: true,
+    });
     return;
-  };
+  }
 
   const response = await fetch(modelUrl);
 
-  if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+  if (!response.ok) {
+    throw new Error(`HTTP error! Status: ${response.status}`);
+  }
 
   const contentLength = +(response.headers.get("Content-Length") || 0);
-  const reader = response.body?.getReader(); // read in chunks
+  const reader = response.body?.getReader();
 
-  if (!reader) throw new Error("No response body");
+  if (!reader) {
+    throw new Error("No response body");
+  }
 
   let received = 0;
   const chunks: Uint8Array[] = [];
@@ -33,24 +58,32 @@ export async function downloadModel(modelUrl: string, modelName: string, onProgr
         const progress = contentLength ? Math.round((received / contentLength) * 100) : 0;
         const info = formatDownloadProgress(received, contentLength);
 
-        // update state
-        onProgress?.(progress, received, info, contentLength);
+        onProgress?.({
+          progress,
+          loaded: received,
+          total: contentLength,
+          info,
+          isComplete: false,
+        });
       }
     }
 
     const blob = new Blob(chunks as BlobPart[]);
+    await cache.put(modelUrl, new Response(blob));
 
-    await cache.put(modelName, new Response(blob))
+    onProgress?.({
+      progress: 100,
+      loaded: received,
+      total: contentLength,
+      info: formatDownloadProgress(received, contentLength),
+      isComplete: true,
+    });
 
-    onProgress?.(100, received, formatDownloadProgress(received, contentLength), contentLength);
     console.log("Model downloaded and cached successfully!");
-
-    return true;
   } finally {
     reader.releaseLock();
   }
 }
-
 
 const formatBytes = (bytes: number): string => {
   if (bytes === 0) return '0 Bytes';
@@ -63,7 +96,7 @@ const formatBytes = (bytes: number): string => {
 };
 
 function formatDownloadProgress(loaded: number, total: number) {
-  if (total == 0) {
+  if (total === 0) {
     return formatBytes(loaded);
   }
 

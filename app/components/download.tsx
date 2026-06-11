@@ -2,47 +2,39 @@
 
 import { useState, useEffect } from 'react';
 import { ModelType } from '@/app/utils/types';
+import { downloadModel, DownloadProgress } from '@/app/utils/model_download';
 
 interface DownloadProps {
   model: ModelType;
   onDownloadComplete?: () => void;
 }
 
-export interface ProgressState {
-  progress: number;
-  loaded: number;
-  info: string;
-  total: number;
-  isComplete: boolean;
-}
-
-export default function Download({ model }: DownloadProps) {
-  const [progressState, setProgressState] = useState<ProgressState>({
+export default function Download({ model, onDownloadComplete }: DownloadProps) {
+  const [progress, setProgress] = useState<DownloadProgress>({
     progress: 0,
     loaded: 0,
-    info: '-- --',
     total: 0,
+    info: '-- --',
     isComplete: false,
   });
+  const [error, setError] = useState<string | null>(null);
 
-  // onProgress callback that consumes args from downloadModel
-  const handleProgress = (progress: number, loaded: number, info: string, total: number) => {
-    setProgressState({
-      progress,
-      loaded,
-      info,
-      total,
-      isComplete: progress === 100,
-    });
+  const handleProgress = (progressData: DownloadProgress) => {
+    setProgress(progressData);
+    if (progressData.isComplete) {
+      onDownloadComplete?.();
+    }
   };
 
   useEffect(() => {
     const initializeDownload = async () => {
       try {
-        const { downloadModel } = await import('@/app/utils/model_download');
-        await downloadModel(model.url, model.name, handleProgress);
-      } catch (error) {
-        console.error('Download failed:', error);
+        setError(null);
+        await downloadModel(model.url, handleProgress);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : 'Download failed';
+        setError(errorMsg);
+        console.error('Download failed:', err);
       }
     };
 
@@ -59,64 +51,73 @@ export default function Download({ model }: DownloadProps) {
         </div>
 
         {/* Progress Container */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          {/* Progress Bar */}
-          <div className="mb-6">
-            <div className="flex justify-between items-center mb-3">
-              <span className="text-sm font-medium text-gray-700">Progress</span>
-              <span className="text-sm font-semibold text-emerald-600">{progressState.progress}%</span>
+        <div className={`rounded-lg shadow-sm p-6 ${error ? 'bg-red-50' : 'bg-white'}`}>
+          {error ? (
+            <div className="text-center">
+              <div className="text-red-600 font-semibold mb-2">Download Failed</div>
+              <p className="text-sm text-red-500">{error}</p>
             </div>
+          ) : (
+            <>
+              {/* Progress Bar */}
+              <div className="mb-6">
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-sm font-medium text-gray-700">Progress</span>
+                  <span className="text-sm font-semibold text-emerald-600">{progress.progress}%</span>
+                </div>
 
-            {/* Bar Background */}
-            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-              {/* Bar Fill */}
-              <div
-                className="bg-gradient-to-r from-emerald-400 to-emerald-600 h-full rounded-full transition-all duration-300"
-                style={{ width: `${progressState.progress}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Progress Info */}
-          <div className="space-y-3">
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-gray-600">Downloaded</span>
-              <span className="font-medium text-gray-800">{progressState.info}</span>
-            </div>
-
-            {progressState.total > 0 && (
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-gray-600">Speed</span>
-                <span className="font-medium text-gray-800">
-                  {calculateSpeed(progressState.loaded)}
-                </span>
+                {/* Bar Background */}
+                <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                  {/* Bar Fill */}
+                  <div
+                    className="bg-gradient-to-r from-emerald-400 to-emerald-600 h-full rounded-full transition-all duration-300"
+                    style={{ width: `${progress.progress}%` }}
+                  />
+                </div>
               </div>
-            )}
 
-            {!progressState.isComplete && progressState.total > 0 && (
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-gray-600">ETA</span>
-                <span className="font-medium text-gray-800">
-                  {calculateETA(progressState.progress, progressState.total, progressState.loaded)}
-                </span>
-              </div>
-            )}
-          </div>
+              {/* Progress Info */}
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-600">Downloaded</span>
+                  <span className="font-medium text-gray-800">{progress.info}</span>
+                </div>
 
-          {/* Status Message */}
-          <div className="mt-6 pt-6 border-t border-gray-100">
-            {progressState.isComplete ? (
-              <div className="flex items-center justify-center space-x-2 text-emerald-600">
-                <CheckIcon />
-                <span className="font-medium">Download Complete</span>
+                {progress.total > 0 && !progress.isComplete && (
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-600">Speed</span>
+                    <span className="font-medium text-gray-800">
+                      {calculateSpeed(progress.loaded)}
+                    </span>
+                  </div>
+                )}
+
+                {!progress.isComplete && progress.total > 0 && (
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-600">ETA</span>
+                    <span className="font-medium text-gray-800">
+                      {calculateETA(progress.progress, progress.total, progress.loaded)}
+                    </span>
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="flex items-center justify-center space-x-2 text-gray-500">
-                <span className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" />
-                <span className="text-sm">Downloading...</span>
+
+              {/* Status Message */}
+              <div className="mt-6 pt-6 border-t border-gray-100">
+                {progress.isComplete ? (
+                  <div className="flex items-center justify-center space-x-2 text-emerald-600">
+                    <CheckIcon />
+                    <span className="font-medium">Download Complete</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center space-x-2 text-gray-500">
+                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" />
+                    <span className="text-sm">Downloading...</span>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
 
         {/* Additional Info */}

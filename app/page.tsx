@@ -14,7 +14,7 @@ export default function Home() {
     const checkCache = async () => {
       try {
         const cache = await caches.open('ai-models');
-        const cachedModel = await cache.match('llama');
+        const cachedModel = await cache.match(MODELS.llama);
         setModelCached(!!cachedModel);
       } catch (error) {
         console.error('Error checking cache:', error);
