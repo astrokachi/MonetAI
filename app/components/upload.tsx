@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, DragEvent, ChangeEvent } from "react";
 import { UploadSimpleIcon, FilePdfIcon, ImageIcon, XIcon, CheckCircleIcon } from "@phosphor-icons/react";
+import { formatText } from "@/app/utils/text_formatting";
 
 const formatSize = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
@@ -8,11 +9,17 @@ const formatSize = (bytes: number): string => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+interface ExtractionResult {
+  text: string;
+  formatted: string;
+  status: "extracted" | "formatted" | "error";
+}
+
 export default function UploadComponent() {
   const [file, setFile] = useState<File | null>(null);
   const [password, setPassword] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<ExtractionResult | null>(null);
   const [dragOver, setDragOver] = useState<boolean>(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -28,15 +35,45 @@ export default function UploadComponent() {
       headers["x-pdf-password"] = password;
     }
 
-    const data = await fetch('/api/upload', {
-      method: "POST",
-      body: formData,
-      headers: headers
-    })
-    const res = await data.json();
-    setResult(res)
-    // setResult({ name: res.info, size: file.size, type: file.type, status: "uploaded" });
-    setLoading(false);
+    try {
+      const response = await fetch('/api/upload', {
+        method: "POST",
+        body: formData,
+        headers: headers
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        setResult({
+          text: "",
+          formatted: error.error || "Failed to extract text",
+          status: "error"
+        });
+        setLoading(false);
+        return;
+      }
+
+      const data = await response.json();
+      const rawText = data.text;
+
+      // Format the text on the client
+      const formattedText = formatText(rawText);
+
+      setResult({
+        text: rawText,
+        formatted: formattedText,
+        status: "formatted"
+      });
+    } catch (error) {
+      console.error(error);
+      setResult({
+        text: "",
+        formatted: "Error uploading file",
+        status: "error"
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDrop = (e: DragEvent<HTMLDivElement>): void => {
@@ -160,13 +197,23 @@ export default function UploadComponent() {
         </button>
 
         {result && (
-          <div className="rounded-xl bg-gray-50 border border-gray-200 px-4 py-3.5 animate-[fadeUp_0.25s_ease]">
-            <div className="flex items-center gap-2 ">
-              <CheckCircleIcon size={14} weight="fill" className="text-emerald-400 shrink-0" />
-              <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">Done</span>
+          <div className={`rounded-xl border px-4 py-3.5 animate-[fadeUp_0.25s_ease] ${
+            result.status === "error" 
+              ? "bg-red-50 border-red-200" 
+              : "bg-gray-50 border-gray-200"
+          }`}>
+            <div className="flex items-center gap-2 mb-3">
+              <CheckCircleIcon 
+                size={14} 
+                weight="fill" 
+                className={result.status === "error" ? "text-red-400" : "text-emerald-400"}
+              />
+              <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">
+                {result.status === "error" ? "Error" : "Formatted"}
+              </span>
             </div>
-            <pre className="text-xs text-gray-500 leading-relaxed font-mono whitespace-pre-wrap break-all">
-              {JSON.stringify(result, null, 2)}
+            <pre className="text-xs text-gray-500 leading-relaxed font-mono whitespace-pre-wrap break-all max-h-80 overflow-y-auto">
+              {result.formatted}
             </pre>
           </div>
         )}

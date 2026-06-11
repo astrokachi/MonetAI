@@ -11,12 +11,11 @@ export async function POST(req: Request) {
 
     const password = req.headers.get("x-pdf-password") || undefined;
 
-    extractText(file, password);
-    const transactions = ""
-    return Response.json(transactions);
+    const extractedText = await extractText(file, password);
+
+    return Response.json({ text: extractedText });
   } catch (error) {
     console.error(error);
     return Response.json({ error: "Failed to parse PDF" }, { status: 500 });
   }
 }
-
