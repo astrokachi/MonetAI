@@ -1,4 +1,4 @@
-import { getDocument } from "pdfjs-dist";
+import { PDFParse } from "pdf-parse";
 
 export async function extractText(file: File, password?: string) {
   const buffer = await file.arrayBuffer();
@@ -8,12 +8,11 @@ export async function extractText(file: File, password?: string) {
     return Response.json({ error: "No file provided" }, { status: 400 });
   }
 
-  const text = getDocument({
+  const parser = new PDFParse({
     data: uint8Array,
     password
   })
 
-  console.log(text);
-
-  return;
+  const textResult = await parser.getText();
+  return textResult.text;
 }
