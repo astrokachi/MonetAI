@@ -73,7 +73,7 @@ export default function DocumentProcessor() {
       try {
         if (!modelReady && !isInitializing && !attemptedInit) {
           setAttemptedInit(true);
-          await initializeModel(MODELS.qwen);
+          await initializeModel(MODELS.llama);
           // modelReady becomes true, effect re-runs
           return;
         }

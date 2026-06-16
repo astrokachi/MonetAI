@@ -2,6 +2,7 @@
 
 import { useContext, useEffect, useCallback } from 'react';
 import { ModelContext, ModelContextType } from '@/app/context/model_context';
+import { MODELS } from '../utils/models';
 
 interface UseModelInferenceOptions {
   autoInitialize?: boolean;
@@ -21,7 +22,7 @@ export function useModelInference(options?: UseModelInferenceOptions): ModelCont
   // auto initialize model on mount if requested
   useEffect(() => {
     if (shouldAutoInit && !modelReady && !isInitializing) {
-      initializeModel().catch(err => {
+      initializeModel(MODELS.llama).catch(err => {
         options?.onError?.(err);
       });
     }
