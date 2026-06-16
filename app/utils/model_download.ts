@@ -44,6 +44,7 @@ export async function downloadModel(
 
   let received = 0;
   const chunks: Uint8Array[] = [];
+  let lastEmit = 0;
 
   try {
     while (true) {
@@ -55,16 +56,22 @@ export async function downloadModel(
         chunks.push(value);
         received += value.length;
 
-        const progress = contentLength ? Math.round((received / contentLength) * 100) : 0;
-        const info = formatDownloadProgress(received, contentLength);
+        const now = Date.now();
 
-        onProgress?.({
-          progress,
-          loaded: received,
-          total: contentLength,
-          info,
-          isComplete: false,
-        });
+        if (now - lastEmit > 150) {
+          lastEmit = now;
+
+          const progress = contentLength ? Math.round((received / contentLength) * 100) : 0;
+          const info = formatDownloadProgress(received, contentLength);
+
+          onProgress?.({
+            progress,
+            loaded: received,
+            total: contentLength,
+            info,
+            isComplete: false,
+          });
+        }
       }
     }
 

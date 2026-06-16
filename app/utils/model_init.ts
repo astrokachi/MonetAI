@@ -3,7 +3,7 @@
 import { Wllama } from '@wllama/wllama/esm/index.js';
 
 const CONFIG_PATHS = {
-  default: '/wllama/wllama.wasm',
+  default: '/wllama/wasm/wllama.wasm',
 }
 
 /**
@@ -18,9 +18,9 @@ export async function initModel(modelBlob: Blob): Promise<Wllama> {
 
     console.log("Loading model into wllama...");
     await wllama.loadModel([modelBlob], {
-      n_threads: 3,
+      n_threads: Math.max(1, navigator.hardwareConcurrency - 1),
       n_ctx: 2048,
-      n_gpu_layers: 0,
+      n_gpu_layers: 2,
     });
 
     console.log("Model loaded successfully");

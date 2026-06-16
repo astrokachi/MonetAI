@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, ReactNode, useState, useCallback } from 'react';
+import { createContext, ReactNode, useState, useCallback } from 'react';
 import { initModel, getModelFromCache } from '@/app/utils/model_init';
 import { MODELS } from '@/app/utils/models';
 import { Wllama } from '@wllama/wllama/esm/index.js';
@@ -16,7 +16,7 @@ export interface ModelContextType {
   wllama: Wllama | null;
 
   // actions
-  initializeModel: (modelUrl?: string) => Promise<void>;
+  initializeModel: (modelUrl: string) => Promise<void>;
   runInference: (prompt: string, options?: {
     temperature?: number;
     maxTokens?: number;
@@ -39,7 +39,9 @@ export function ModelProvider({ children }: ModelProviderProps) {
   const [error, setError] = useState<string | null>(null);
   const [wllama, setWllama] = useState<Wllama | null>(null);
 
-  const initializeModel = useCallback(async (modelUrl: string = MODELS.llama) => {
+  const initializeModel = useCallback(async (modelUrl: string) => {
+    if (!modelUrl) throw new Error("Please provide a model.")
+
     if (modelReady) {
       console.log("Model already initialized");
       return;
@@ -61,7 +63,6 @@ export function ModelProvider({ children }: ModelProviderProps) {
 
       setWllama(instance);
       setModelReady(true);
-      console.log("Model ready for inference");
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to initialize model';
       setError(errorMsg);
@@ -81,6 +82,7 @@ export function ModelProvider({ children }: ModelProviderProps) {
         topP?: number;
       }
     ) => {
+      console.log("hook model readiness: ", modelReady);
       if (!modelReady || !wllama) {
         throw new Error("Model is not ready. Call initializeModel() first.");
       }
@@ -89,11 +91,14 @@ export function ModelProvider({ children }: ModelProviderProps) {
       setError(null);
 
       try {
+        console.time("generate");
         const response = await wllama.createChatCompletion({
           messages: [
             {
               role: "system",
-              content: "You are a helpful assistant that processes and analyzes document content. Be concise and accurate."
+              content: `You are a helpful assistant that processes and analyzes document content. \n 
+                        The user will send a text (extracted from a bank statement) you are to properly parse the text to human readable format. \n
+                        Return the complete parsed text.`
             },
             {
               role: "user",
@@ -105,6 +110,7 @@ export function ModelProvider({ children }: ModelProviderProps) {
           max_tokens: options?.maxTokens ?? 512,
         });
 
+        console.log("Inference finsihed. Output: ", response);
         return response;
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : 'Inference failed';
