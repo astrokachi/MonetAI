@@ -1,7 +1,7 @@
-"use client";
-import { useState, useRef, DragEvent, ChangeEvent } from "react";
-import { UploadSimpleIcon, FilePdfIcon, ImageIcon, XIcon, CheckCircleIcon } from "@phosphor-icons/react";
-import { formatText } from "@/app/utils/text_formatting";
+'use client';
+
+import { useState, useRef, DragEvent, ChangeEvent } from 'react';
+import { UploadSimpleIcon, FilePdfIcon, ImageIcon, XIcon } from '@phosphor-icons/react';
 
 const formatSize = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
@@ -9,117 +9,62 @@ const formatSize = (bytes: number): string => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-interface ExtractionResult {
-  text: string;
-  formatted: string;
-  status: "extracted" | "formatted" | "error";
+interface UploadAreaProps {
+  onFileSelected: (file: File, password?: string) => void;
 }
 
-export default function UploadComponent() {
+export default function UploadArea({ onFileSelected }: UploadAreaProps) {
   const [file, setFile] = useState<File | null>(null);
-  const [password, setPassword] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(false);
-  const [result, setResult] = useState<ExtractionResult | null>(null);
-  const [dragOver, setDragOver] = useState<boolean>(false);
+  const [password, setPassword] = useState('');
+  const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleUpload = async (): Promise<void> => {
-    if (!file || loading) return;
-
-    setLoading(true);
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const headers: Record<string, string> = {};
-    if (password) {
-      headers["x-pdf-password"] = password;
-    }
-
-    try {
-      const response = await fetch('/api/upload', {
-        method: "POST",
-        body: formData,
-        headers: headers
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        setResult({
-          text: "",
-          formatted: error.error || "Failed to extract text",
-          status: "error"
-        });
-        setLoading(false);
-        return;
-      }
-
-      const data = await response.json();
-      const rawText = data.text;
-
-      // Format the text on the client
-      const formattedText = formatText(rawText);
-
-      setResult({
-        text: rawText,
-        formatted: formattedText,
-        status: "formatted"
-      });
-    } catch (error) {
-      console.error(error);
-      setResult({
-        text: "",
-        formatted: "Error uploading file",
-        status: "error"
-      });
-    } finally {
-      setLoading(false);
-    }
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] ?? null;
+    setFile(f);
   };
 
-  const handleDrop = (e: DragEvent<HTMLDivElement>): void => {
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(false);
     const dropped = e.dataTransfer.files?.[0] ?? null;
     if (dropped) setFile(dropped);
   };
 
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>): void => {
-    const f = e.target.files?.[0] ?? null;
-    setFile(f);
-    setResult(null);
-  };
-
-  const handleRemove = (): void => {
+  const handleRemove = () => {
     setFile(null);
-    setResult(null);
+    if (inputRef.current) inputRef.current.value = '';
   };
 
-  const isImage = file?.type.startsWith("image/") ?? false;
+  const handleSubmit = () => {
+    if (!file) return;
+    onFileSelected(file, password || undefined);
+  };
 
-  const isDisabled = !file || loading;
+  const isImage = file?.type.startsWith('image/') ?? false;
+  const isDisabled = !file;
 
   return (
-    <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6 font-sans">
+    <div className="min-h-screen bg-stone-100 flex items-center justify-center p-6">
       <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-sm flex flex-col gap-5">
-
         <div className="flex flex-col gap-1">
           <UploadSimpleIcon size={20} weight="light" className="text-gray-400 mb-1" />
-          <h2 className="text-base font-medium text-gray-800 tracking-tight">Upload file</h2>
-          <p className="text-xs text-gray-400">PDF or image, up to 10 MB</p>
+          <h2 className="text-base font-medium text-gray-800 tracking-tight">Upload a statement</h2>
+          <p className="text-xs text-gray-400">Upload a PDF or image to get started</p>
         </div>
 
         <div
           className={`
             rounded-xl border transition-colors duration-150 min-h-28 flex items-center justify-center px-5 py-7
             ${file
-              ? "border border-gray-200 bg-white cursor-default"
+              ? 'border border-gray-200 bg-white cursor-default'
               : dragOver
-                ? "border-dashed border-gray-300 bg-gray-100 cursor-pointer"
-                : "border-dashed border-gray-200 bg-gray-50 cursor-pointer"
+                ? 'border-dashed border-gray-300 bg-gray-100 cursor-pointer'
+                : 'border-dashed border-gray-200 bg-gray-50 cursor-pointer'
             }
           `}
           onClick={() => !file && inputRef.current?.click()}
-          onDragOver={(e: DragEvent<HTMLDivElement>) => { e.preventDefault(); setDragOver(true); }}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
         >
@@ -137,7 +82,7 @@ export default function UploadComponent() {
                 <UploadSimpleIcon size={22} weight="light" className="text-gray-400" />
               </div>
               <p className="text-sm text-gray-500">
-                {dragOver ? "Drop it here" : "Drag & drop or click to browse"}
+                {dragOver ? 'Drop it here' : 'Drag & drop or click to browse'}
               </p>
               <p className="text-xs text-gray-300 tracking-wide">PDF · PNG · JPG · WEBP</p>
             </div>
@@ -168,55 +113,26 @@ export default function UploadComponent() {
           <input
             id="password"
             type="password"
-            placeholder="Enter PDF password if required"
+            placeholder="PDF password if required"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-3 py-2.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-700 placeholder-gray-400 transition-colors duration-150 focus:outline-none focus:border-gray-400 focus:bg-gray-50"
+            className="w-full px-3 py-2.5 rounded-lg border border-gray-200 bg-white text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-gray-400"
           />
         </div>
 
         <button
+          onClick={handleSubmit}
+          disabled={isDisabled}
           className={`
             w-full py-3 rounded-xl text-sm font-medium tracking-wide transition-colors duration-150
-            ${!file || loading
-              ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-              : "bg-gray-800 text-white cursor-pointer hover:bg-gray-700"
+            ${isDisabled
+              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              : 'bg-gray-800 text-white cursor-pointer hover:bg-gray-700'
             }
           `}
-          onClick={handleUpload}
-          disabled={isDisabled}
         >
-          {loading ? (
-            <span className="flex items-center justify-center gap-2">
-              <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" />
-              Processing…
-            </span>
-          ) : (
-            "Upload"
-          )}
+          Process Document
         </button>
-
-        {result && (
-          <div className={`rounded-xl border px-4 py-3.5 animate-[fadeUp_0.25s_ease] ${
-            result.status === "error" 
-              ? "bg-red-50 border-red-200" 
-              : "bg-gray-50 border-gray-200"
-          }`}>
-            <div className="flex items-center gap-2 mb-3">
-              <CheckCircleIcon 
-                size={14} 
-                weight="fill" 
-                className={result.status === "error" ? "text-red-400" : "text-emerald-400"}
-              />
-              <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                {result.status === "error" ? "Error" : "Formatted"}
-              </span>
-            </div>
-            <pre className="text-xs text-gray-500 leading-relaxed font-mono whitespace-pre-wrap break-all max-h-80 overflow-y-auto">
-              {result.formatted}
-            </pre>
-          </div>
-        )}
       </div>
 
       <style>{`

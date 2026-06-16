@@ -1,15 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Upload from "./components/upload";
-import Download from "./components/download";
-import { MODELS } from "./utils/models";
-import { ModelType } from "./utils/types";
+import DocumentProcessor from './components/document-processor';
+import Download from './components/download';
+import { MODELS } from './utils/models';
+import { ModelType } from './utils/types';
 
 export default function Home() {
   const [modelCached, setModelCached] = useState<boolean | null>(null);
 
-  // check cache on mount
   useEffect(() => {
     const checkCache = async () => {
       try {
@@ -25,6 +24,10 @@ export default function Home() {
     checkCache();
   }, []);
 
+  const onDownloadComplete = () => {
+    setModelCached(true);
+  };
+
   if (modelCached === null) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-stone-50 to-stone-100">
@@ -37,13 +40,13 @@ export default function Home() {
   }
 
   if (modelCached) {
-    return <Upload />;
+    return <DocumentProcessor />;
   }
 
   const model: ModelType = {
-    name: 'llama',
-    url: MODELS.llama,
+    name: 'qwen',
+    url: MODELS.qwen,
   };
 
-  return <Download model={model} />;
+  return <Download model={model} onDownloadComplete={onDownloadComplete} />;
 }

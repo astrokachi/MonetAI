@@ -1,110 +1,122 @@
 'use client';
 
 import { useState } from 'react';
-import { useModelInference } from '@/app/hooks/useModelInference';
-import { SparkleIcon } from '@phosphor-icons/react';
+import { FileTextIcon, SparkleIcon, CopySimpleIcon, CheckIcon } from '@phosphor-icons/react';
 
-interface InferenceComponentProps {
-  extractedText: string;
+interface AnalysisViewProps {
+  analysis: string;
+  formattedText: string;
+  onReset: () => void;
 }
 
-export default function InferenceComponent({ extractedText }: InferenceComponentProps) {
-  const [prompt, setPrompt] = useState('');
-  const [inference, setInference] = useState<string | null>(null);
-  const { isInitializing, isRunning, modelReady, error, runInference } = useModelInference({
-    autoInitialize: false,
-    onError: (err) => console.error('Model error:', err),
-  });
+export default function AnalysisView({ analysis, formattedText, onReset }: AnalysisViewProps) {
+  const [showRaw, setShowRaw] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const handleInference = async () => {
-    if (!prompt.trim() || !modelReady) return;
-
+  const handleCopy = async () => {
     try {
-      // Combine extracted text context with user prompt
-      const fullPrompt = `Document content:\n\n${extractedText}\n\nQuestion: ${prompt}`;
-
-      const response = await runInference(fullPrompt, {
-        temperature: 0.7,
-        maxTokens: 512,
-      });
-
-      // Extract the message content from response
-      const responseText = response.choices?.[0]?.message?.content || response.message || '';
-      setInference(responseText);
-      setPrompt('');
-    } catch (err) {
-      console.error('Inference error:', err);
+      await navigator.clipboard.writeText(analysis);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // fallback
     }
   };
 
+  // Split analysis into sections if it contains markdown-style headings
+  const sections = analysis.split(/(?=## )/).filter(Boolean);
+
   return (
-    <div className="flex flex-col gap-4 w-full">
-      {/* Model Status */}
-      <div className={`rounded-lg border px-4 py-3 text-xs ${error
-          ? 'bg-red-50 border-red-200'
-          : modelReady
-            ? 'bg-emerald-50 border-emerald-200'
-            : 'bg-blue-50 border-blue-200'
-        }`}>
-        <p className={`font-medium ${error
-            ? 'text-red-700'
-            : modelReady
-              ? 'text-emerald-700'
-              : 'text-blue-700'
-          }`}>
-          {error ? `Error: ${error}` : isInitializing ? 'Initializing model...' : modelReady ? 'Model Ready' : 'Loading...'}
-        </p>
+    <div className="flex flex-col gap-4">
+      {/* Formatted Statement Card */}
+      <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+              <SparkleIcon size={18} weight="fill" className="text-emerald-500" />
+            </div>
+            <div>
+              <h3 className="text-sm font-medium text-gray-800">Formatted Statement</h3>
+              <p className="text-xs text-gray-400">AI-generated structured view</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 bg-gray-100 hover:bg-gray-200 transition-colors"
+            >
+              {copied ? (
+                <><CheckIcon size={14} weight="bold" className="text-emerald-500" />Copied</>
+              ) : (
+                <><CopySimpleIcon size={14} />Copy</>
+              )}
+            </button>
+          </div>
+        </div>
+        <div className="px-6 py-5">
+          <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap font-mono">
+            {sections.length > 1 ? (
+              sections.map((section, i) => {
+                const isHeading = section.startsWith('##');
+                if (isHeading) {
+                  const [, heading, ...body] = section.split('\n');
+                  return (
+                    <div key={i} className="mb-4">
+                      <h4 className="text-base font-semibold text-gray-800 mb-2">
+                        {heading.replace(/^##\s*/, '')}
+                      </h4>
+                      <p>{body.join('\n').trim()}</p>
+                    </div>
+                  );
+                }
+                return <p key={i} className="mb-3">{section.trim()}</p>;
+              })
+            ) : (
+              <p>{analysis}</p>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Inference Input */}
-      {modelReady && (
-        <div className="flex flex-col gap-3">
-          <div className="flex gap-2">
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Ask a question about the document..."
-              className="flex-1 px-3 py-2 rounded-lg border border-gray-200 bg-white text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:border-gray-400 resize-none"
-              rows={3}
-              disabled={isRunning}
-            />
+      {/* Raw Extracted Text (collapsible) */}
+      <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <button
+          onClick={() => setShowRaw(!showRaw)}
+          className="w-full flex items-center justify-between px-6 py-4 hover:bg-gray-50 transition-colors"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center">
+              <FileTextIcon size={18} weight="light" className="text-gray-500" />
+            </div>
+            <div className="text-left">
+              <h3 className="text-sm font-medium text-gray-700">Raw Extracted Text</h3>
+              <p className="text-xs text-gray-400">
+                {showRaw ? 'Click to hide' : `${formattedText.length.toLocaleString()} characters`}
+              </p>
+            </div>
           </div>
+          <span className={`text-gray-400 transition-transform ${showRaw ? 'rotate-180' : ''}`}>
+            ▼
+          </span>
+        </button>
+        {showRaw && (
+          <div className="px-6 pb-5 border-t border-gray-100">
+            <pre className="text-xs text-gray-500 leading-relaxed whitespace-pre-wrap font-mono mt-4 max-h-96 overflow-y-auto">
+              {formattedText}
+            </pre>
+          </div>
+        )}
+      </div>
 
-          <button
-            onClick={handleInference}
-            disabled={!prompt.trim() || isRunning}
-            className={`
-              flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
-              ${!prompt.trim() || isRunning
-                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                : 'bg-emerald-600 text-white cursor-pointer hover:bg-emerald-700'
-              }
-            `}
-          >
-            {isRunning ? (
-              <>
-                <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" />
-                Processing...
-              </>
-            ) : (
-              <>
-                <SparkleIcon size={16} weight="fill" />
-                Analyze
-              </>
-            )}
-          </button>
-        </div>
-      )}
-
-      {/* Inference Result */}
-      {inference && (
-        <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3">
-          <h3 className="text-xs font-medium text-gray-600 mb-2 uppercase tracking-wider">Response</h3>
-          <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-            {inference}
-          </p>
-        </div>
-      )}
+      {/* Actions */}
+      <div className="flex justify-center gap-3 pt-2">
+        <button
+          onClick={onReset}
+          className="px-6 py-2.5 rounded-xl text-sm font-medium text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 shadow-sm transition-colors"
+        >
+          Process Another Document
+        </button>
+      </div>
     </div>
   );
 }
