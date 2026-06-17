@@ -23,7 +23,6 @@ export default function AnalysisView({ analysis, formattedText, onReset }: Analy
     }
   };
 
-  // Split analysis into sections if it contains markdown-style headings
   const sections = analysis.split(/(?=## )/).filter(Boolean);
 
   return (

@@ -74,7 +74,6 @@ export default function DocumentProcessor() {
         if (!modelReady && !isInitializing && !attemptedInit) {
           setAttemptedInit(true);
           await initializeModel(MODELS.llama);
-          // modelReady becomes true, effect re-runs
           return;
         }
 
@@ -126,7 +125,7 @@ export default function DocumentProcessor() {
   }, [result]);
 
   const handleNewDocument = useCallback(async () => {
-    await resetModel();
+    resetModel();
     setPhase('idle');
     setResult(null);
     setErrorMessage(null);
