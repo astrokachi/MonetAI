@@ -44,8 +44,8 @@ export default function Home() {
   }
 
   const model: ModelType = {
-    name: 'qwen',
-    url: MODELS.qwen,
+    name: 'llama',
+    url: MODELS.llama,
   };
 
   return <Download model={model} onDownloadComplete={onDownloadComplete} />;
