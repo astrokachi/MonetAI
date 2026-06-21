@@ -2,7 +2,13 @@
 
 import { createContext, ReactNode, useState, useCallback } from 'react';
 import { initModel, getModelFromCache } from '@/app/utils/model_init';
-import { MODELS } from '@/app/utils/models';
+import {
+  collectRuntimeDiagnostics,
+  estimateTokensFromText,
+  formatModelErrorForUi,
+  logModelError,
+  logModelPhase,
+} from '@/app/utils/model_logging';
 import { Wllama } from '@wllama/wllama/esm/index.js';
 
 export interface ModelContextType {
@@ -51,23 +57,31 @@ export function ModelProvider({ children }: ModelProviderProps) {
     setError(null);
 
     try {
-      console.log("Getting model from cache...");
+      logModelPhase('cache-read', { modelUrl });
       const modelBlob = await getModelFromCache(modelUrl);
 
       if (!modelBlob) {
         throw new Error("Model not found in cache. Please download it first.");
       }
 
-      console.log("Initializing wllama with cached model...");
+      logModelPhase('init-start', {
+        modelUrl,
+        cachedModelSizeBytes: modelBlob.size,
+      });
+
       const instance = await initModel(modelBlob);
 
       setWllama(instance);
       setModelReady(true);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to initialize model';
+      const runtimeDiagnostics = await collectRuntimeDiagnostics(true);
+      const serialized = logModelError(err, {
+        phase: 'init-failed',
+        modelUrl,
+      }, runtimeDiagnostics);
+      const errorMsg = formatModelErrorForUi(serialized);
       setError(errorMsg);
-      console.error("Model initialization failed:", errorMsg);
-      throw err;
+      throw new Error(errorMsg);
     } finally {
       setIsInitializing(false);
     }
@@ -82,7 +96,6 @@ export function ModelProvider({ children }: ModelProviderProps) {
         topP?: number;
       }
     ) => {
-      console.log("hook model readiness: ", modelReady);
       if (!modelReady || !wllama) {
         throw new Error("Model is not ready. Call initializeModel() first.");
       }
@@ -90,7 +103,21 @@ export function ModelProvider({ children }: ModelProviderProps) {
       setIsRunning(true);
       setError(null);
 
+      const inferenceOptions = {
+        temperature: options?.temperature ?? 0.7,
+        top_p: options?.topP ?? 0.9,
+        max_tokens: options?.maxTokens ?? 512,
+      };
+      const promptTokenEstimate = estimateTokensFromText(prompt);
+
       try {
+        logModelPhase('inference-start', {
+          promptLength: prompt.length,
+          promptTokenEstimate,
+          inferenceOptions,
+          modelLoaded: wllama.isModelLoaded(),
+        });
+
         console.time("generate");
         const response = await wllama.createChatCompletion({
           messages: [
@@ -105,17 +132,39 @@ export function ModelProvider({ children }: ModelProviderProps) {
               content: prompt
             }
           ],
-          temperature: options?.temperature ?? 0.7,
-          top_p: options?.topP ?? 0.9,
-          max_tokens: options?.maxTokens ?? 512,
+          ...inferenceOptions,
+        });
+        console.timeEnd("generate");
+
+        logModelPhase('inference-complete', {
+          finishReason: response.choices?.[0]?.finish_reason ?? null,
+          outputLength: response.choices?.[0]?.message?.content?.length ?? 0,
         });
 
-        console.log("Inference finsihed. Output: ", response);
         return response;
       } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'Inference failed';
-        setError(errorMsg);
-        throw err;
+        console.timeEnd("generate");
+
+        const runtimeDiagnostics = await collectRuntimeDiagnostics(true);
+        let debugInfo: unknown = null;
+        try {
+          debugInfo = await wllama._getDebugInfo();
+          logModelPhase('inference-failed', { debugInfo });
+        } catch (debugErr) {
+          logModelPhase('inference-failed', {
+            debugInfoError: debugErr instanceof Error ? debugErr.message : String(debugErr),
+          });
+        }
+
+        const serialized = logModelError(err, {
+          phase: 'inference-failed',
+          promptLength: prompt.length,
+          promptTokenEstimate,
+          inferenceOptions,
+        }, runtimeDiagnostics);
+
+        setError(formatModelErrorForUi(serialized));
+        throw new Error(formatModelErrorForUi(serialized));
       } finally {
         setIsRunning(false);
       }
@@ -133,7 +182,7 @@ export function ModelProvider({ children }: ModelProviderProps) {
         await wllama.exit();
       }
     } catch (err) {
-      console.error("Error unloading model:", err);
+      logModelError(err, { phase: 'model-reset' });
     } finally {
       setWllama(null);
       setModelReady(false);

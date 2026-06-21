@@ -6,6 +6,7 @@ import { formatText } from '@/app/utils/text_formatting';
 import UploadArea from './upload';
 import AnalysisView from './inference';
 import { ArrowArcLeftIcon, CheckCircleIcon, FileTextIcon, SparkleIcon, WarningCircleIcon } from '@phosphor-icons/react';
+import { logModelError } from '@/app/utils/model_logging';
 import { MODELS } from '../utils/models';
 
 type Phase = 'idle' | 'uploading' | 'extracting' | 'initializing' | 'analyzing' | 'complete' | 'error';
@@ -25,7 +26,7 @@ export default function DocumentProcessor() {
 
   const { isInitializing, isRunning, modelReady, error, initializeModel, runInference, resetModel } = useModelInference({
     autoInitialize: false,
-    onError: (err) => console.error('Model error:', err),
+    onError: (err) => logModelError(err, { phase: 'hook-error' }),
   });
 
   const handleFileSelected = useCallback(async (file: File, password?: string) => {
@@ -59,6 +60,7 @@ export default function DocumentProcessor() {
       setPhase('initializing');
 
     } catch (err) {
+      logModelError(err, { phase: 'hook-error' });
       setErrorMessage(err instanceof Error ? err.message : 'Upload failed');
       setPhase('error');
     }
@@ -98,6 +100,10 @@ export default function DocumentProcessor() {
         }, 100);
 
       } catch (err) {
+        logModelError(err, {
+          phase: 'inference-failed',
+          promptLength: result?.formattedText?.length,
+        });
         setErrorMessage(err instanceof Error ? err.message : 'Analysis failed');
         setPhase('error');
       }

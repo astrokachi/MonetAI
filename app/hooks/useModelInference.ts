@@ -1,6 +1,6 @@
 'use client';
 
-import { useContext, useEffect, useCallback } from 'react';
+import { useContext, useEffect } from 'react';
 import { ModelContext, ModelContextType } from '@/app/context/model_context';
 import { MODELS } from '../utils/models';
 
@@ -23,7 +23,7 @@ export function useModelInference(options?: UseModelInferenceOptions): ModelCont
   useEffect(() => {
     if (shouldAutoInit && !modelReady && !isInitializing) {
       initializeModel(MODELS.llama).catch(err => {
-        options?.onError?.(err);
+        options?.onError?.(err instanceof Error ? err : new Error(String(err)));
       });
     }
   }, [shouldAutoInit, modelReady, isInitializing, initializeModel, options]);

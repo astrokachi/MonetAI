@@ -1,10 +1,23 @@
 'use client';
 
 import { Wllama } from '@wllama/wllama/esm/index.js';
+import {
+  collectRuntimeDiagnostics,
+  createWllamaLogger,
+  logModelError,
+  logModelPhase,
+  logRuntimeDiagnostics,
+} from '@/app/utils/model_logging';
 
 const CONFIG_PATHS = {
   default: '/wllama/wasm/wllama.wasm',
-}
+};
+
+const LOAD_PARAMS = {
+  n_threads: Math.max(1, navigator.hardwareConcurrency - 1),
+  n_ctx: 2048,
+  n_gpu_layers: 2,
+};
 
 /**
  * Initializes the wllama instance with a model blob
@@ -12,21 +25,48 @@ const CONFIG_PATHS = {
  * The download/caching is handled separately by downloadModel()
  */
 export async function initModel(modelBlob: Blob): Promise<Wllama> {
-  try {
-    console.log("Creating Wllama instance...");
-    const wllama = new Wllama(CONFIG_PATHS);
+  let runtimeDiagnostics;
 
-    console.log("Loading model into wllama...");
-    await wllama.loadModel([modelBlob], {
-      n_threads: Math.max(1, navigator.hardwareConcurrency - 1),
-      n_ctx: 2048,
-      n_gpu_layers: 2,
+  try {
+    runtimeDiagnostics = await logRuntimeDiagnostics('init-start');
+
+    logModelPhase('init-wllama-create', {
+      wasmPath: CONFIG_PATHS.default,
+      modelBlobSizeBytes: modelBlob.size,
+      modelBlobType: modelBlob.type,
+      loadParams: LOAD_PARAMS,
+      wllamaLibVersion: Wllama.getLibllamaVersion(),
     });
 
-    console.log("Model loaded successfully");
+    const wllama = new Wllama(CONFIG_PATHS, {
+      logger: createWllamaLogger(),
+      suppressNativeLog: false,
+    });
+
+    logModelPhase('init-load-model', {
+      ...LOAD_PARAMS,
+      webgpuSupportedByApi: wllama.isSupportWebGPU(),
+    });
+    await wllama.loadModel([modelBlob], LOAD_PARAMS);
+
+    logModelPhase('init-complete', {
+      modelLoaded: wllama.isModelLoaded(),
+      bosToken: wllama.getBOS(),
+      eosToken: wllama.getEOS(),
+    });
+
     return wllama;
   } catch (error) {
-    console.error("Failed to load model:", error);
+    if (!runtimeDiagnostics) {
+      runtimeDiagnostics = await collectRuntimeDiagnostics(true);
+    }
+
+    logModelError(error, {
+      phase: 'init-failed',
+      modelBlobSize: modelBlob.size,
+      loadParams: LOAD_PARAMS,
+    }, runtimeDiagnostics);
+
     throw error;
   }
 }
@@ -41,14 +81,20 @@ export async function getModelFromCache(modelUrl: string): Promise<Blob | null> 
     const cachedResponse = await cache.match(modelUrl);
 
     if (!cachedResponse) {
-      console.log("Model not found in cache");
+      logModelPhase('cache-read', { modelUrl, cached: false });
       return null;
     }
 
     const blob = await cachedResponse.blob();
+    logModelPhase('cache-read', {
+      modelUrl,
+      cached: true,
+      sizeBytes: blob.size,
+      type: blob.type,
+    });
     return blob;
   } catch (error) {
-    console.error("Failed to get model from cache:", error);
+    logModelError(error, { phase: 'cache-read', modelUrl });
     return null;
   }
 }
