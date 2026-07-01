@@ -1,52 +1,99 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import DocumentProcessor from './components/document-processor';
-import Download from './components/download';
-import { MODELS } from './utils/models';
-import { ModelType } from './utils/types';
+import { useContext } from "react";
+import ModelSelector from "./components/model_selector";
+import DocumentProcessor from "./components/document_processor";
+import { ModelContext } from "./context/model_context";
+import { SparkleIcon } from "@phosphor-icons/react";
 
 export default function Home() {
-  const [modelCached, setModelCached] = useState<boolean | null>(null);
+  const { phase, modelId, initProgress, error, selectModel, abortDownload } =
+    useContext(ModelContext)!;
 
-  useEffect(() => {
-    const checkCache = async () => {
-      try {
-        const cache = await caches.open('ai-models');
-        const cachedModel = await cache.match(MODELS.llama);
-        setModelCached(!!cachedModel);
-      } catch (error) {
-        console.error('Error checking cache:', error);
-        setModelCached(false);
-      }
-    };
+  if (phase === "select") {
+    return <ModelSelector onSelect={selectModel} />;
+  }
 
-    checkCache();
-  }, []);
+  if (phase === "downloading") {
+    const progressPct = Math.round((initProgress?.progress ?? 0) * 100);
+    const isCached =
+      initProgress?.text?.toLowerCase().includes("cache") ?? false;
 
-  const onDownloadComplete = () => {
-    setModelCached(true);
-  };
-
-  if (modelCached === null) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-stone-50 to-stone-100">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-gray-400 border-t-emerald-600 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">Initializing...</p>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <div className="w-full max-w-sm">
+          <div className="text-center mb-8">
+            <div className="w-14 h-14 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-5">
+              <SparkleIcon
+                size={28}
+                weight="light"
+                className="text-emerald-600"
+              />
+            </div>
+            <h1 className="text-xl font-semibold text-gray-900 mb-1">
+              {isCached ? "Loading Model" : "Downloading Model"}
+            </h1>
+            <p className="text-sm text-gray-500 truncate max-w-xs mx-auto">
+              {modelId}
+            </p>
+          </div>
+
+          {error ? (
+            <div className="bg-rose-50 rounded-xl p-5 text-center">
+              <p className="text-rose-700 font-medium text-sm mb-1">
+                Download Failed
+              </p>
+              <p className="text-xs text-rose-500">{error}</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+              <div className="mb-5">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                    Progress
+                  </span>
+                  <span className="text-sm font-semibold text-gray-900 tabular-nums">
+                    {progressPct}%
+                  </span>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-emerald-500 h-full rounded-full transition-all duration-300"
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+              </div>
+
+              <p className="text-xs text-gray-400 text-center leading-relaxed">
+                {initProgress?.text ?? "Initializing..."}
+              </p>
+
+              <div className="mt-5 pt-4 border-t border-gray-100 flex items-center justify-center gap-2 text-gray-400">
+                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                <span className="text-xs">
+                  {isCached ? "Loading into memory..." : "Downloading..."}
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-5 text-center">
+            <button
+              onClick={abortDownload}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 hover:text-gray-700 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+
+          <p className="text-center text-xs text-gray-400 mt-5">
+            Your AI model is being securely downloaded and cached locally in
+            your browser.
+          </p>
         </div>
       </div>
     );
   }
 
-  if (modelCached) {
-    return <DocumentProcessor />;
-  }
-
-  const model: ModelType = {
-    name: 'llama',
-    url: MODELS.llama,
-  };
-
-  return <Download model={model} onDownloadComplete={onDownloadComplete} />;
+  return <DocumentProcessor />;
 }
