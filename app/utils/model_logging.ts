@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import type { WllamaLogger } from '@wllama/wllama/esm/index.js';
+import type { WllamaLogger } from "@wllama/wllama/esm/index.js";
 
-const LOG_PREFIX = '[monetai:model]';
+const LOG_PREFIX = "[monetai:model]";
 
 type NavigatorWithGpu = Navigator & {
   gpu?: {
@@ -24,18 +24,29 @@ function getNavigator(): NavigatorWithGpu {
 }
 
 export type ModelLogPhase =
-  | 'runtime-diagnostics'
-  | 'cache-read'
-  | 'init-start'
-  | 'init-wllama-create'
-  | 'init-load-model'
-  | 'init-complete'
-  | 'init-failed'
-  | 'inference-start'
-  | 'inference-complete'
-  | 'inference-failed'
-  | 'model-reset'
-  | 'hook-error';
+  | "runtime-diagnostics"
+  | "cache-read"
+  | "init-start"
+  | "init-wllama-create"
+  | "init-load-model"
+  | "init-complete"
+  | "init-failed"
+  | "inference-start"
+  | "inference-complete"
+  | "inference-failed"
+  | "model-reset"
+  | "init-retry-cpu-only"
+  | "init-failed-retry"
+  | "gpu-warmup-failed"
+  | "hook-error"
+  | "webllm-init-start"
+  | "webllm-init-progress"
+  | "webllm-init-complete"
+  | "webllm-init-failed"
+  | "webllm-inference-start"
+  | "webllm-inference-complete"
+  | "webllm-inference-failed"
+  | "engine-switch";
 
 export interface ModelErrorContext {
   phase: ModelLogPhase;
@@ -44,6 +55,8 @@ export interface ModelErrorContext {
   promptTokenEstimate?: number;
   inferenceOptions?: Record<string, unknown>;
   modelBlobSize?: number;
+  gpuProbeReason?: string;
+  willRetryWithoutGpu?: boolean;
   loadParams?: Record<string, unknown>;
 }
 
@@ -77,7 +90,12 @@ export interface SerializedModelError {
   phase: ModelLogPhase;
   message: string;
   name: string;
-  errorClass: 'WllamaRuntimeError' | 'WllamaError' | 'WllamaAbortError' | 'Error' | 'unknown';
+  errorClass:
+    | "WllamaRuntimeError"
+    | "WllamaError"
+    | "WllamaAbortError"
+    | "Error"
+    | "unknown";
   wllamaErrorType?: string;
   wasmStack?: string;
   jsStack?: string;
@@ -89,43 +107,50 @@ export interface SerializedModelError {
 let cachedDiagnostics: RuntimeDiagnostics | null = null;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === "object" && value !== null;
 }
 
-function detectLikelyCause(message: string, wasmStack?: string): string | undefined {
-  const haystack = `${message}\n${wasmStack ?? ''}`.toLowerCase();
+function detectLikelyCause(
+  message: string,
+  wasmStack?: string,
+): string | undefined {
+  const haystack = `${message}\n${wasmStack ?? ""}`.toLowerCase();
 
-  if (haystack.includes('ggml_backend_webgpu')) {
-    return 'WebGPU backend failure during graph compute or queue synchronization. Common on Safari/macOS when GPU layers are enabled or WebGPU support is partial.';
+  if (haystack.includes("ggml_backend_webgpu")) {
+    return "WebGPU backend failure during graph compute or queue synchronization. Common on Safari/macOS when GPU layers are enabled or WebGPU support is partial.";
   }
-  if (haystack.includes('update_slots')) {
-    return 'Inference slot update failed inside llama.cpp server context, often during token generation or result polling.';
+  if (haystack.includes("update_slots")) {
+    return "Inference slot update failed inside llama.cpp server context, often during token generation or result polling.";
   }
-  if (haystack.includes('cannot allocate webassembly.memory')) {
-    return 'WebAssembly memory allocation failed, often on mobile Safari or low-memory devices.';
+  if (haystack.includes("cannot allocate webassembly.memory")) {
+    return "WebAssembly memory allocation failed, often on mobile Safari or low-memory devices.";
   }
-  if (message.includes('(ABORT)')) {
-    return 'Native WASM abort (ggml_abort). Check the WASM stack trace above for the failing C++ function.';
+  if (message.includes("(ABORT)")) {
+    return "Native WASM abort (ggml_abort). Check the WASM stack trace above for the failing C++ function.";
   }
-  if (haystack.includes('kv_cache') || haystack.includes('context')) {
-    return 'Context or KV cache limit may have been exceeded for the prompt size.';
+  if (haystack.includes("kv_cache") || haystack.includes("context")) {
+    return "Context or KV cache limit may have been exceeded for the prompt size.";
   }
 
   return undefined;
 }
 
-function classifyError(err: unknown): SerializedModelError['errorClass'] {
-  if (!isRecord(err)) return 'unknown';
+function classifyError(err: unknown): SerializedModelError["errorClass"] {
+  if (!isRecord(err)) return "unknown";
 
-  if (err.name === 'RuntimeError') return 'WllamaRuntimeError';
-  if (err.name === 'AbortError') return 'WllamaAbortError';
-  if (typeof err.type === 'string' && err instanceof Error) return 'WllamaError';
+  if (err.name === "RuntimeError") return "WllamaRuntimeError";
+  if (err.name === "AbortError") return "WllamaAbortError";
+  if (typeof err.type === "string" && err instanceof Error)
+    return "WllamaError";
 
-  if (err instanceof Error) return 'Error';
-  return 'unknown';
+  if (err instanceof Error) return "Error";
+  return "unknown";
 }
 
-export function logModelPhase(phase: ModelLogPhase, details?: Record<string, unknown>): void {
+export function logModelPhase(
+  phase: ModelLogPhase,
+  details?: Record<string, unknown>,
+): void {
   if (details) {
     console.log(`${LOG_PREFIX} [${phase}]`, details);
     return;
@@ -133,7 +158,10 @@ export function logModelPhase(phase: ModelLogPhase, details?: Record<string, unk
   console.log(`${LOG_PREFIX} [${phase}]`);
 }
 
-export function logModelWarning(message: string, details?: Record<string, unknown>): void {
+export function logModelWarning(
+  message: string,
+  details?: Record<string, unknown>,
+): void {
   if (details) {
     console.warn(`${LOG_PREFIX} ${message}`, details);
     return;
@@ -144,7 +172,7 @@ export function logModelWarning(message: string, details?: Record<string, unknow
 function isSupportMem64(): boolean {
   try {
     new WebAssembly.Memory({
-      address: 'i64',
+      address: "i64",
       initial: 1,
     } as unknown as WebAssembly.MemoryDescriptor);
     return true;
@@ -153,7 +181,7 @@ function isSupportMem64(): boolean {
   }
 }
 
-async function getWebGpuDiagnostics(): Promise<RuntimeDiagnostics['webgpu']> {
+async function getWebGpuDiagnostics(): Promise<RuntimeDiagnostics["webgpu"]> {
   const nav = getNavigator();
   const base = {
     apiAvailable: !!nav.gpu,
@@ -175,24 +203,28 @@ async function getWebGpuDiagnostics(): Promise<RuntimeDiagnostics['webgpu']> {
 
     const limits: Record<string, number> = {};
     for (const [key, value] of Object.entries(adapter.limits)) {
-      if (typeof value === 'number') {
+      if (typeof value === "number") {
         limits[key] = value;
       }
     }
 
     let adapterInfo: Record<string, string> | null = null;
-    if ('requestAdapterInfo' in adapter && typeof adapter.requestAdapterInfo === 'function') {
+    if (
+      "requestAdapterInfo" in adapter &&
+      typeof adapter.requestAdapterInfo === "function"
+    ) {
       try {
         const info = await adapter.requestAdapterInfo();
         adapterInfo = {
-          vendor: info.vendor ?? 'unknown',
-          architecture: info.architecture ?? 'unknown',
-          device: info.device ?? 'unknown',
-          description: info.description ?? 'unknown',
+          vendor: info.vendor ?? "unknown",
+          architecture: info.architecture ?? "unknown",
+          device: info.device ?? "unknown",
+          description: info.description ?? "unknown",
         };
       } catch (infoErr) {
         adapterInfo = {
-          infoError: infoErr instanceof Error ? infoErr.message : String(infoErr),
+          infoError:
+            infoErr instanceof Error ? infoErr.message : String(infoErr),
         };
       }
     }
@@ -212,7 +244,9 @@ async function getWebGpuDiagnostics(): Promise<RuntimeDiagnostics['webgpu']> {
   }
 }
 
-export async function collectRuntimeDiagnostics(forceRefresh = false): Promise<RuntimeDiagnostics> {
+export async function collectRuntimeDiagnostics(
+  forceRefresh = false,
+): Promise<RuntimeDiagnostics> {
   if (cachedDiagnostics && !forceRefresh) {
     return cachedDiagnostics;
   }
@@ -255,7 +289,9 @@ export async function collectRuntimeDiagnostics(forceRefresh = false): Promise<R
   return cachedDiagnostics;
 }
 
-export async function logRuntimeDiagnostics(phase: ModelLogPhase = 'runtime-diagnostics'): Promise<RuntimeDiagnostics> {
+export async function logRuntimeDiagnostics(
+  phase: ModelLogPhase = "runtime-diagnostics",
+): Promise<RuntimeDiagnostics> {
   const diagnostics = await collectRuntimeDiagnostics(true);
   logModelPhase(phase, diagnostics as unknown as Record<string, unknown>);
   return diagnostics;
@@ -268,17 +304,17 @@ export function serializeModelError(
 ): SerializedModelError {
   const errorClass = classifyError(err);
   const message = err instanceof Error ? err.message : String(err);
-  const name = err instanceof Error ? err.name : 'UnknownError';
+  const name = err instanceof Error ? err.name : "UnknownError";
   const jsStack = err instanceof Error ? err.stack : undefined;
 
   let wasmStack: string | undefined;
   let wllamaErrorType: string | undefined;
 
   if (isRecord(err)) {
-    if (typeof err.stack === 'string' && errorClass === 'WllamaRuntimeError') {
+    if (typeof err.stack === "string" && errorClass === "WllamaRuntimeError") {
       wasmStack = err.stack;
     }
-    if (typeof err.type === 'string') {
+    if (typeof err.type === "string") {
       wllamaErrorType = err.type;
     }
   }
@@ -305,7 +341,7 @@ export function logModelError(
   const serialized = serializeModelError(err, context, runtimeDiagnostics);
 
   console.group(`${LOG_PREFIX} ERROR [${context.phase}] ${serialized.message}`);
-  console.error('Summary:', {
+  console.error("Summary:", {
     errorClass: serialized.errorClass,
     name: serialized.name,
     wllamaErrorType: serialized.wllamaErrorType,
@@ -313,22 +349,22 @@ export function logModelError(
   });
 
   if (serialized.context) {
-    console.error('Context:', serialized.context);
+    console.error("Context:", serialized.context);
   }
 
   if (serialized.wasmStack) {
-    console.error('WASM stack trace:\n' + serialized.wasmStack);
+    console.error("WASM stack trace:\n" + serialized.wasmStack);
   }
 
   if (serialized.jsStack) {
-    console.error('JS stack trace:\n' + serialized.jsStack);
+    console.error("JS stack trace:\n" + serialized.jsStack);
   }
 
   if (serialized.runtimeDiagnostics) {
-    console.error('Runtime diagnostics:', serialized.runtimeDiagnostics);
+    console.error("Runtime diagnostics:", serialized.runtimeDiagnostics);
   }
 
-  console.error('Raw error object:', err);
+  console.error("Raw error object:", err);
   console.groupEnd();
 
   return serialized;
@@ -336,10 +372,13 @@ export function logModelError(
 
 export function createWllamaLogger(): WllamaLogger {
   return {
-    debug: (...args: unknown[]) => console.debug(`${LOG_PREFIX} [wllama:debug]`, ...args),
+    debug: (...args: unknown[]) =>
+      console.debug(`${LOG_PREFIX} [wllama:debug]`, ...args),
     log: (...args: unknown[]) => console.log(`${LOG_PREFIX} [wllama]`, ...args),
-    warn: (...args: unknown[]) => console.warn(`${LOG_PREFIX} [wllama:warn]`, ...args),
-    error: (...args: unknown[]) => console.error(`${LOG_PREFIX} [wllama:error]`, ...args),
+    warn: (...args: unknown[]) =>
+      console.warn(`${LOG_PREFIX} [wllama:warn]`, ...args),
+    error: (...args: unknown[]) =>
+      console.error(`${LOG_PREFIX} [wllama:error]`, ...args),
   };
 }
 
@@ -348,7 +387,9 @@ export function estimateTokensFromText(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-export function formatModelErrorForUi(serialized: SerializedModelError): string {
+export function formatModelErrorForUi(
+  serialized: SerializedModelError,
+): string {
   const parts = [serialized.message];
 
   if (serialized.likelyCause) {
@@ -357,7 +398,7 @@ export function formatModelErrorForUi(serialized: SerializedModelError): string 
 
   if (serialized.wasmStack) {
     const firstMeaningfulLine = serialized.wasmStack
-      .split('\n')
+      .split("\n")
       .map((line) => line.trim())
       .find((line) => line.length > 0);
 
@@ -366,5 +407,5 @@ export function formatModelErrorForUi(serialized: SerializedModelError): string 
     }
   }
 
-  return parts.join(' — ');
+  return parts.join(" — ");
 }

@@ -1,212 +1,249 @@
-'use client';
+"use client";
 
-import { createContext, ReactNode, useState, useCallback } from 'react';
-import { initModel, getModelFromCache } from '@/app/utils/model_init';
+import {
+  createContext,
+  ReactNode,
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+} from "react";
 import {
   collectRuntimeDiagnostics,
-  estimateTokensFromText,
-  formatModelErrorForUi,
   logModelError,
   logModelPhase,
-} from '@/app/utils/model_logging';
-import { Wllama } from '@wllama/wllama/esm/index.js';
+} from "@/app/utils/model_logging";
+import { Wllama } from "@wllama/wllama/esm/index.js";
+import { WebLLMEngine, type InitProgress } from "@/app/engines/web_llm";
+import type { EngineType, AppPhase } from "@/app/utils/types";
+import { getModelConfig } from "@/app/utils/models";
 
 export interface ModelContextType {
-  // model state
-  isInitializing: boolean;
-  isRunning: boolean;
-  modelReady: boolean;
+  phase: AppPhase;
+  modelId: string | null;
   error: string | null;
+  initProgress: InitProgress | null;
+  engineType: EngineType;
 
-  // model instance
-  wllama: Wllama | null;
-
-  // actions
-  initializeModel: (modelUrl: string) => Promise<void>;
-  runInference: (prompt: string, options?: {
-    temperature?: number;
-    maxTokens?: number;
-    topP?: number;
-  }) => Promise<any>;
+  selectModel: (modelId: string) => void;
+  abortDownload: () => void;
+  abortInference: () => void;
+  runInference: (
+    prompt: string,
+    systemPrompt: string,
+    options?: {
+      temperature?: number;
+      maxTokens?: number;
+      topP?: number;
+      frequencyPenalty?: number;
+      presencePenalty?: number;
+      onToken?: (token: string) => void;
+    },
+  ) => Promise<string>;
   clearError: () => void;
   resetModel: () => void;
 }
 
-export const ModelContext = createContext<ModelContextType | undefined>(undefined);
+export const ModelContext = createContext<ModelContextType | undefined>(
+  undefined,
+);
 
 interface ModelProviderProps {
   children: ReactNode;
+  defaultEngine?: EngineType;
 }
 
-export function ModelProvider({ children }: ModelProviderProps) {
-  const [isInitializing, setIsInitializing] = useState(false);
-  const [isRunning, setIsRunning] = useState(false);
-  const [modelReady, setModelReady] = useState(false);
+export function ModelProvider({
+  children,
+  defaultEngine = "webllm",
+}: ModelProviderProps) {
+  const [phase, setPhase] = useState<AppPhase>("select");
+  const [modelId, setModelId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [wllama, setWllama] = useState<Wllama | null>(null);
+  const [initProgress, setInitProgress] = useState<InitProgress | null>(null);
 
-  const initializeModel = useCallback(async (modelUrl: string) => {
-    if (!modelUrl) throw new Error("Please provide a model.")
+  const wllamaRef = useRef<Wllama | null>(null);
+  const webllmEngineRef = useRef<WebLLMEngine | null>(null);
+  const cancelledRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const modelConfigRef = useRef<Record<string, number | undefined>>({});
 
-    if (modelReady) {
-      console.log("Model already initialized");
-      return;
-    }
+  const engineType = defaultEngine;
 
-    setIsInitializing(true);
-    setError(null);
+  useEffect(() => {
+    if (phase !== "downloading" || !modelId || engineType !== "webllm") return;
 
-    try {
-      logModelPhase('cache-read', { modelUrl });
-      const modelBlob = await getModelFromCache(modelUrl);
+    cancelledRef.current = false;
 
-      if (!modelBlob) {
-        throw new Error("Model not found in cache. Please download it first.");
+    const initEngine = async () => {
+      setInitProgress(null);
+      setError(null);
+
+      try {
+        logModelPhase("webllm-init-start", { modelId });
+        const engine = new WebLLMEngine();
+        webllmEngineRef.current = engine;
+        await engine.initialize(modelId, (progress) => {
+          if (cancelledRef.current) return;
+          setInitProgress(progress);
+          logModelPhase("webllm-init-progress", {
+            text: progress.text,
+            progress: progress.progress,
+          });
+        });
+        if (cancelledRef.current) return;
+        logModelPhase("webllm-init-complete", { modelId });
+        setPhase("ready");
+      } catch (err) {
+        if (cancelledRef.current) return;
+        const runtimeDiagnostics = await collectRuntimeDiagnostics(true);
+        logModelError(
+          err,
+          { phase: "webllm-init-failed", modelUrl: modelId },
+          runtimeDiagnostics,
+        );
+        setError(err instanceof Error ? err.message : String(err));
       }
+    };
 
-      logModelPhase('init-start', {
-        modelUrl,
-        cachedModelSizeBytes: modelBlob.size,
-      });
+    initEngine();
+  }, [phase, modelId, engineType]);
 
-      const instance = await initModel(modelBlob);
-
-      setWllama(instance);
-      setModelReady(true);
-    } catch (err) {
-      const runtimeDiagnostics = await collectRuntimeDiagnostics(true);
-      const serialized = logModelError(err, {
-        phase: 'init-failed',
-        modelUrl,
-      }, runtimeDiagnostics);
-      const errorMsg = formatModelErrorForUi(serialized);
-      setError(errorMsg);
-      throw new Error(errorMsg);
-    } finally {
-      setIsInitializing(false);
-    }
-  }, [modelReady]);
+  const selectModel = useCallback((id: string) => {
+    setModelId(id);
+    setError(null);
+    setInitProgress(null);
+    setPhase("downloading");
+    const rc = getModelConfig(id);
+    modelConfigRef.current = {
+      temperature: rc?.temperature,
+      top_p: rc?.top_p,
+      frequency_penalty: rc?.frequency_penalty,
+      presence_penalty: rc?.presence_penalty,
+    };
+  }, []);
 
   const runInference = useCallback(
     async (
       prompt: string,
+      systemPrompt: string,
       options?: {
         temperature?: number;
         maxTokens?: number;
         topP?: number;
-      }
-    ) => {
-      if (!modelReady || !wllama) {
-        throw new Error("Model is not ready. Call initializeModel() first.");
-      }
+        frequencyPenalty?: number;
+        presencePenalty?: number;
+        onToken?: (token: string) => void;
+      },
+    ): Promise<string> => {
+      abortRef.current = new AbortController();
+      const signal = abortRef.current.signal;
 
-      setIsRunning(true);
-      setError(null);
+      if (engineType === "wllama") {
+        if (!wllamaRef.current) throw new Error("Model is not initialized.");
 
-      const inferenceOptions = {
-        temperature: options?.temperature ?? 0.7,
-        top_p: options?.topP ?? 0.9,
-        max_tokens: options?.maxTokens ?? 512,
-      };
-      const promptTokenEstimate = estimateTokensFromText(prompt);
-
-      try {
-        logModelPhase('inference-start', {
-          promptLength: prompt.length,
-          promptTokenEstimate,
-          inferenceOptions,
-          modelLoaded: wllama.isModelLoaded(),
-        });
-
-        console.time("generate");
-        const response = await wllama.createChatCompletion({
+        const response = await (wllamaRef.current as any).createChatCompletion({
           messages: [
-            {
-              role: "system",
-              content: `You are a helpful assistant that processes and analyzes document content. \n 
-                        The user will send a text (extracted from a bank statement) you are to properly parse the text to human readable format. \n
-                        Return the complete parsed text.`
-            },
-            {
-              role: "user",
-              content: prompt
-            }
+            { role: "system", content: systemPrompt },
+            { role: "user", content: prompt },
           ],
-          ...inferenceOptions,
-        });
-        console.timeEnd("generate");
-
-        logModelPhase('inference-complete', {
-          finishReason: response.choices?.[0]?.finish_reason ?? null,
-          outputLength: response.choices?.[0]?.message?.content?.length ?? 0,
+          temperature: options?.temperature ?? 0.5,
+          top_p: options?.topP ?? 0.3,
+          max_tokens: options?.maxTokens ?? 512,
+          cache_prompt: true,
+          n_keep: -1,
         });
 
-        return response;
-      } catch (err) {
-        console.timeEnd("generate");
-
-        const runtimeDiagnostics = await collectRuntimeDiagnostics(true);
-        let debugInfo: unknown = null;
-        try {
-          debugInfo = await wllama._getDebugInfo();
-          logModelPhase('inference-failed', { debugInfo });
-        } catch (debugErr) {
-          logModelPhase('inference-failed', {
-            debugInfoError: debugErr instanceof Error ? debugErr.message : String(debugErr),
-          });
-        }
-
-        const serialized = logModelError(err, {
-          phase: 'inference-failed',
-          promptLength: prompt.length,
-          promptTokenEstimate,
-          inferenceOptions,
-        }, runtimeDiagnostics);
-
-        setError(formatModelErrorForUi(serialized));
-        throw new Error(formatModelErrorForUi(serialized));
-      } finally {
-        setIsRunning(false);
+        return response.choices?.[0]?.message?.content ?? "";
       }
+
+      const engine = webllmEngineRef.current;
+      if (!engine || !engine.isReady)
+        throw new Error("Model is not initialized.");
+
+      const mc = modelConfigRef.current;
+      if (options?.onToken) {
+        return await engine.streamChat(
+          [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: prompt },
+          ],
+          options.onToken,
+          {
+            temperature: options.temperature ?? mc.temperature,
+            maxTokens: options.maxTokens,
+            topP: options.topP ?? mc.top_p,
+            frequencyPenalty: options.frequencyPenalty ?? mc.frequency_penalty,
+            presencePenalty: options.presencePenalty ?? mc.presence_penalty,
+            signal,
+          },
+        );
+      }
+
+      const response = await engine.chat(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt },
+        ],
+        {
+          temperature: options?.temperature ?? mc.temperature,
+          maxTokens: options?.maxTokens,
+          topP: options?.topP ?? mc.top_p,
+          frequencyPenalty: options?.frequencyPenalty ?? mc.frequency_penalty,
+          presencePenalty: options?.presencePenalty ?? mc.presence_penalty,
+          signal,
+        },
+      );
+
+      return response.choices?.[0]?.message?.content ?? "";
     },
-    [modelReady, wllama]
+    [engineType],
   );
+
+  const abortDownload = useCallback(() => {
+    cancelledRef.current = true;
+    webllmEngineRef.current?.reset();
+    webllmEngineRef.current = null;
+    setPhase("select");
+    setModelId(null);
+    setError(null);
+    setInitProgress(null);
+  }, []);
+
+  const abortInference = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
 
   const clearError = useCallback(() => {
     setError(null);
   }, []);
 
-  const resetModel = useCallback(async () => {
-    try {
-      if (wllama) {
-        await wllama.exit();
-      }
-    } catch (err) {
-      logModelError(err, { phase: 'model-reset' });
-    } finally {
-      setWllama(null);
-      setModelReady(false);
-      setError(null);
-      setIsRunning(false);
-      setIsInitializing(false);
-    }
-  }, [wllama]);
+  const resetModel = useCallback(() => {
+    webllmEngineRef.current?.reset();
+    webllmEngineRef.current = null;
+    wllamaRef.current = null;
+    setPhase("select");
+    setModelId(null);
+    setError(null);
+    setInitProgress(null);
+  }, []);
 
   const value: ModelContextType = {
-    isInitializing,
-    isRunning,
-    modelReady,
+    phase,
+    modelId,
     error,
-    wllama,
-    initializeModel,
+    initProgress,
+    engineType,
+    selectModel,
+    abortDownload,
+    abortInference,
     runInference,
     clearError,
     resetModel,
   };
 
   return (
-    <ModelContext.Provider value={value}>
-      {children}
-    </ModelContext.Provider>
+    <ModelContext.Provider value={value}>{children}</ModelContext.Provider>
   );
 }

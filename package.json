@@ -3,13 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npm run copy:wasm && next dev --webpack",
-    "build": "npm run copy:wasm && next build",
-    "start": "npm run copy:wasm && next start",
-    "lint": "eslint",
-    "copy:wasm": "cp -r ./node_modules/@wllama/wllama/esm ./public/wllama"
+    "dev": "next dev --webpack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
   },
   "dependencies": {
+    "@mlc-ai/web-llm": "^0.2.84",
     "@phosphor-icons/react": "^2.1.10",
     "@wllama/wllama": "^3.4.1",
     "next": "16.2.6",
