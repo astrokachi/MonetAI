@@ -1,7 +1,10 @@
 "use client";
 
-import { CreateMLCEngine } from "@mlc-ai/web-llm";
-import type { MLCEngineInterface, ChatCompletionMessageParam } from "@mlc-ai/web-llm";
+import { CreateWebWorkerMLCEngine } from "@mlc-ai/web-llm";
+import type {
+  MLCEngineInterface,
+  ChatCompletionMessageParam,
+} from "@mlc-ai/web-llm";
 
 export interface InitProgress {
   text: string;
@@ -11,6 +14,8 @@ export interface InitProgress {
 export class WebLLMEngine {
   private engine: MLCEngineInterface | null = null;
   private _modelId = "";
+  private initializing = false;
+  private busy = false;
 
   get modelId(): string {
     return this._modelId;
@@ -20,16 +25,33 @@ export class WebLLMEngine {
     return this.engine !== null;
   }
 
+  get isBusy(): boolean {
+    return this.busy;
+  }
+
   async initialize(
     modelId: string,
     onProgress?: (progress: InitProgress) => void,
   ): Promise<void> {
+    if (this.initializing) return;
+    if (this.engine) return;
+    this.initializing = true;
     this._modelId = modelId;
-    this.engine = await CreateMLCEngine(modelId, {
-      initProgressCallback: (report) => {
-        onProgress?.({ text: report.text, progress: report.progress });
-      },
-    });
+    try {
+      this.engine = await CreateWebWorkerMLCEngine(
+        new Worker(new URL("./worker.ts", import.meta.url), {
+          type: "module",
+        }),
+        modelId,
+        {
+          initProgressCallback: (report) => {
+            onProgress?.({ text: report.text, progress: report.progress });
+          },
+        },
+      );
+    } finally {
+      this.initializing = false;
+    }
   }
 
   async chat(
@@ -44,13 +66,19 @@ export class WebLLMEngine {
     },
   ) {
     if (!this.engine) throw new Error("Engine not initialized");
-    return await this.engine.chat.completions.create({
-      messages,
-      temperature: options?.temperature ?? 1.0,
-      max_tokens: options?.maxTokens ?? 4096,
-      top_p: options?.topP ?? 1.0,
-      ...(options?.signal ? { abortSignal: options.signal } : {}),
-    });
+    if (this.busy) throw new Error("Generation already in progress");
+    this.busy = true;
+    try {
+      return await this.engine.chat.completions.create({
+        messages,
+        temperature: options?.temperature ?? 1.0,
+        max_tokens: options?.maxTokens ?? 4096,
+        top_p: options?.topP ?? 1.0,
+        ...(options?.signal ? { abortSignal: options.signal } : {}),
+      });
+    } finally {
+      this.busy = false;
+    }
   }
 
   async streamChat(
@@ -66,27 +94,35 @@ export class WebLLMEngine {
     },
   ): Promise<string> {
     if (!this.engine) throw new Error("Engine not initialized");
-    const response = await this.engine.chat.completions.create({
-      messages,
-      temperature: options?.temperature ?? 1.0,
-      max_tokens: options?.maxTokens ?? 4096,
-      top_p: options?.topP ?? 1.0,
-      stream: true,
-      ...(options?.signal ? { abortSignal: options.signal } : {}),
-    });
-    let fullContent = "";
-    for await (const chunk of response) {
-      const token = chunk.choices?.[0]?.delta?.content || "";
-      if (token) {
-        fullContent += token;
-        onToken(token);
+    if (this.busy) throw new Error("Generation already in progress");
+    this.busy = true;
+    try {
+      const response = await this.engine.chat.completions.create({
+        messages,
+        temperature: options?.temperature ?? 1.0,
+        max_tokens: options?.maxTokens ?? 4096,
+        top_p: options?.topP ?? 1.0,
+        stream: true,
+        ...(options?.signal ? { abortSignal: options.signal } : {}),
+      });
+      let fullContent = "";
+      for await (const chunk of response) {
+        const token = chunk.choices?.[0]?.delta?.content || "";
+        if (token) {
+          fullContent += token;
+          onToken(token);
+        }
       }
+      return fullContent;
+    } finally {
+      this.busy = false;
     }
-    return fullContent;
   }
 
   reset(): void {
     this.engine = null;
     this._modelId = "";
+    this.initializing = false;
+    this.busy = false;
   }
 }
