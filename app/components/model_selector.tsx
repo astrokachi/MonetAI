@@ -2,10 +2,11 @@
 
 import { useState, useMemo } from "react";
 import { SUPPORTED_MODELS, ModelFamily } from "@/app/utils/models";
-import { SparkleIcon, CaretDown, CaretUp, Cpu } from "@phosphor-icons/react";
+import { SparkleIcon, CaretDown, CaretUp, Cpu, ArrowLeftIcon } from "@phosphor-icons/react";
 
 interface ModelSelectorProps {
   onSelect: (modelId: string) => void;
+  onBack: () => void;
   selectedId?: string | null;
 }
 
@@ -28,7 +29,7 @@ function getQuantLabel(name: string): string {
   return m ? m[1] : "";
 }
 
-export default function ModelSelector({ onSelect, selectedId }: ModelSelectorProps) {
+export default function ModelSelector({ onSelect, onBack, selectedId }: ModelSelectorProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const groups = useMemo(() => {
@@ -53,6 +54,13 @@ export default function ModelSelector({ onSelect, selectedId }: ModelSelectorPro
   return (
     <div className="min-h-screen bg-white flex items-center justify-center p-6">
       <div className="w-full max-w-lg">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-xs font-medium text-gray-400 hover:text-gray-600 mb-4 transition-colors"
+        >
+          <ArrowLeftIcon size={12} weight="bold" />
+          Back
+        </button>
         <div className="text-center mb-10">
           <div className="w-14 h-14 rounded-full bg-emerald-50 flex items-center justify-center mx-auto mb-5">
             <SparkleIcon size={28} weight="light" className="text-emerald-600" />
@@ -66,7 +74,6 @@ export default function ModelSelector({ onSelect, selectedId }: ModelSelectorPro
         <div className="space-y-3">
           {groups.map(([family, models]) => {
             const isOpen = expanded.has(family);
-            const first = models[0];
             return (
               <div key={family} className="border border-gray-200 rounded-xl overflow-hidden">
                 <button

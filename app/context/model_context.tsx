@@ -15,8 +15,9 @@ import {
 } from "@/app/utils/model_logging";
 import { Wllama } from "@wllama/wllama/esm/index.js";
 import { WebLLMEngine, type InitProgress } from "@/app/engines/web_llm";
-import type { EngineType, AppPhase } from "@/app/utils/types";
+import type { EngineType, AppPhase, AppMode } from "@/app/utils/types";
 import { getModelConfig } from "@/app/utils/models";
+
 
 export interface ModelContextType {
   phase: AppPhase;
@@ -24,8 +25,11 @@ export interface ModelContextType {
   error: string | null;
   initProgress: InitProgress | null;
   engineType: EngineType;
+  mode: AppMode;
 
   selectModel: (modelId: string) => void;
+  setMode: (mode: AppMode) => void;
+  setCloudReady: () => void;
   abortDownload: () => void;
   abortInference: () => void;
   runInference: (
@@ -39,6 +43,10 @@ export interface ModelContextType {
       presencePenalty?: number;
       onToken?: (token: string) => void;
     },
+  ) => Promise<string>;
+  runCloudAnalysis: (
+    text: string,
+    onToken?: (token: string) => void,
   ) => Promise<string>;
   clearError: () => void;
   resetModel: () => void;
@@ -61,18 +69,23 @@ export function ModelProvider({
   const [modelId, setModelId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [initProgress, setInitProgress] = useState<InitProgress | null>(null);
+  const [mode, setModeState] = useState<AppMode>(null);
 
   const wllamaRef = useRef<Wllama | null>(null);
   const webllmEngineRef = useRef<WebLLMEngine | null>(null);
   const cancelledRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const modelConfigRef = useRef<Record<string, number | undefined>>({});
+  const initStartedRef = useRef(false);
 
   const engineType = defaultEngine;
 
   useEffect(() => {
+    if (mode !== "local") return;
     if (phase !== "downloading" || !modelId || engineType !== "webllm") return;
+    if (initStartedRef.current) return;
 
+    initStartedRef.current = true;
     cancelledRef.current = false;
 
     const initEngine = async () => {
@@ -107,7 +120,35 @@ export function ModelProvider({
     };
 
     initEngine();
-  }, [phase, modelId, engineType]);
+
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, [phase, modelId, engineType, mode]);
+
+  const setMode = useCallback((newMode: AppMode) => {
+    webllmEngineRef.current?.reset();
+    webllmEngineRef.current = null;
+    wllamaRef.current = null;
+    setModeState(newMode);
+    if (newMode === "cloud") {
+      setPhase("ready");
+      setModelId("cloud");
+      setError(null);
+      setInitProgress(null);
+    } else if (newMode === "local") {
+      setPhase("select");
+      setModelId(null);
+      setError(null);
+      setInitProgress(null);
+    }
+    initStartedRef.current = false;
+  }, []);
+
+  const setCloudReady = useCallback(() => {
+    setPhase("ready");
+    setModelId("cloud");
+  }, []);
 
   const selectModel = useCallback((id: string) => {
     setModelId(id);
@@ -123,6 +164,8 @@ export function ModelProvider({
     };
   }, []);
 
+  const isGeneratingRef = useRef(false);
+
   const runInference = useCallback(
     async (
       prompt: string,
@@ -136,72 +179,121 @@ export function ModelProvider({
         onToken?: (token: string) => void;
       },
     ): Promise<string> => {
+      if (isGeneratingRef.current) {
+        abortRef.current?.abort();
+        await new Promise((r) => setTimeout(r, 0));
+      }
+
       abortRef.current = new AbortController();
       const signal = abortRef.current.signal;
-
-      if (engineType === "wllama") {
-        if (!wllamaRef.current) throw new Error("Model is not initialized.");
-
-        const response = await (wllamaRef.current as any).createChatCompletion({
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: prompt },
-          ],
-          temperature: options?.temperature ?? 0.5,
-          top_p: options?.topP ?? 0.3,
-          max_tokens: options?.maxTokens ?? 512,
-          cache_prompt: true,
-          n_keep: -1,
-        });
-
-        return response.choices?.[0]?.message?.content ?? "";
-      }
+      isGeneratingRef.current = true;
 
       const engine = webllmEngineRef.current;
       if (!engine || !engine.isReady)
         throw new Error("Model is not initialized.");
 
-      const mc = modelConfigRef.current;
-      if (options?.onToken) {
-        return await engine.streamChat(
+      try {
+        const mc = modelConfigRef.current;
+        if (options?.onToken) {
+          return await engine.streamChat(
+            [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: prompt },
+            ],
+            options.onToken,
+            {
+              temperature: options.temperature ?? mc.temperature,
+              maxTokens: options.maxTokens,
+              topP: options.topP ?? mc.top_p,
+              frequencyPenalty:
+                options.frequencyPenalty ?? mc.frequency_penalty,
+              presencePenalty: options.presencePenalty ?? mc.presence_penalty,
+              signal,
+            },
+          );
+        }
+
+        const response = await engine.chat(
           [
             { role: "system", content: systemPrompt },
             { role: "user", content: prompt },
           ],
-          options.onToken,
           {
-            temperature: options.temperature ?? mc.temperature,
-            maxTokens: options.maxTokens,
-            topP: options.topP ?? mc.top_p,
-            frequencyPenalty: options.frequencyPenalty ?? mc.frequency_penalty,
-            presencePenalty: options.presencePenalty ?? mc.presence_penalty,
+            temperature: options?.temperature ?? mc.temperature,
+            maxTokens: options?.maxTokens,
+            topP: options?.topP ?? mc.top_p,
+            frequencyPenalty: options?.frequencyPenalty ?? mc.frequency_penalty,
+            presencePenalty: options?.presencePenalty ?? mc.presence_penalty,
             signal,
           },
         );
+
+        return response.choices?.[0]?.message?.content ?? "";
+      } finally {
+        isGeneratingRef.current = false;
+      }
+    },
+    [],
+  );
+
+  const runCloudAnalysis = useCallback(
+    async (
+      text: string,
+      onToken?: (token: string) => void,
+    ): Promise<string> => {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Cloud analysis failed");
       }
 
-      const response = await engine.chat(
-        [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: prompt },
-        ],
-        {
-          temperature: options?.temperature ?? mc.temperature,
-          maxTokens: options?.maxTokens,
-          topP: options?.topP ?? mc.top_p,
-          frequencyPenalty: options?.frequencyPenalty ?? mc.frequency_penalty,
-          presencePenalty: options?.presencePenalty ?? mc.presence_penalty,
-          signal,
-        },
-      );
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response stream");
 
-      return response.choices?.[0]?.message?.content ?? "";
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let full = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const data = JSON.parse(line);
+            if (data.error) throw new Error(data.error);
+            if (data.done) {
+              full = data.full;
+            } else if (data.token) {
+              full += data.token;
+              onToken?.(data.token);
+            }
+          } catch (err) {
+            if (err instanceof Error && err.message !== "Unexpected end of JSON input") {
+              throw err;
+            }
+          }
+        }
+      }
+
+      return full;
     },
-    [engineType],
+    [],
   );
 
   const abortDownload = useCallback(() => {
     cancelledRef.current = true;
+    initStartedRef.current = false;
     webllmEngineRef.current?.reset();
     webllmEngineRef.current = null;
     setPhase("select");
@@ -213,6 +305,7 @@ export function ModelProvider({
   const abortInference = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    isGeneratingRef.current = false;
   }, []);
 
   const clearError = useCallback(() => {
@@ -220,14 +313,15 @@ export function ModelProvider({
   }, []);
 
   const resetModel = useCallback(() => {
+    initStartedRef.current = false;
     webllmEngineRef.current?.reset();
     webllmEngineRef.current = null;
     wllamaRef.current = null;
-    setPhase("select");
-    setModelId(null);
+    setPhase(mode === "cloud" ? "ready" : "select");
+    setModelId(mode === "cloud" ? "cloud" : null);
     setError(null);
     setInitProgress(null);
-  }, []);
+  }, [mode]);
 
   const value: ModelContextType = {
     phase,
@@ -235,10 +329,14 @@ export function ModelProvider({
     error,
     initProgress,
     engineType,
+    mode,
     selectModel,
+    setMode,
+    setCloudReady,
     abortDownload,
     abortInference,
     runInference,
+    runCloudAnalysis,
     clearError,
     resetModel,
   };

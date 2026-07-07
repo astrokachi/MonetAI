@@ -3,18 +3,31 @@
 import { useContext } from "react";
 import ModelSelector from "./components/model_selector";
 import DocumentProcessor from "./components/document_processor";
+import EngineSelector from "./components/engine_selector";
 import { ModelContext } from "./context/model_context";
 import { SparkleIcon } from "@phosphor-icons/react";
 
 export default function Home() {
-  const { phase, modelId, initProgress, error, selectModel, abortDownload } =
-    useContext(ModelContext)!;
+  const {
+    phase,
+    modelId,
+    initProgress,
+    error,
+    selectModel,
+    abortDownload,
+    mode,
+    setMode,
+  } = useContext(ModelContext)!;
 
-  if (phase === "select") {
-    return <ModelSelector onSelect={selectModel} />;
+  if (mode === null) {
+    return <EngineSelector onSelect={setMode} />;
   }
 
-  if (phase === "downloading") {
+  if (mode === "local" && phase === "select") {
+    return <ModelSelector onSelect={selectModel} onBack={() => setMode(null)} />;
+  }
+
+  if (mode === "local" && phase === "downloading") {
     const progressPct = Math.round((initProgress?.progress ?? 0) * 100);
     const isCached =
       initProgress?.text?.toLowerCase().includes("cache") ?? false;
@@ -77,10 +90,16 @@ export default function Home() {
             </div>
           )}
 
-          <div className="mt-5 text-center">
+          <div className="mt-5 flex items-center justify-center gap-3">
+            <button
+              onClick={() => setMode(null)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 hover:text-gray-700 transition-colors"
+            >
+              Back
+            </button>
             <button
               onClick={abortDownload}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 hover:text-gray-700 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-rose-600 bg-white border border-gray-200 hover:bg-rose-50 hover:text-rose-700 transition-colors"
             >
               Cancel
             </button>
