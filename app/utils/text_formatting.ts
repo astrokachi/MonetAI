@@ -1,5 +1,3 @@
-'use client';
-
 export function formatText(rawText: string): string {
   if (!rawText) return '';
 

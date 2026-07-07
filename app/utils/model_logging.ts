@@ -46,7 +46,8 @@ export type ModelLogPhase =
   | "webllm-inference-start"
   | "webllm-inference-complete"
   | "webllm-inference-failed"
-  | "engine-switch";
+  | "engine-switch"
+  | "cloud-analysis-failed";
 
 export interface ModelErrorContext {
   phase: ModelLogPhase;
